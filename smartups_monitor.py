@@ -25,10 +25,13 @@ class WaiterThread(object):
 
     def run(self):
         while True:
-            # thread exits when sendmsg fails, because the socket was closed by the main thread.
+            # thread exits when sendall fails, because the socket was closed by the main thread.
             # That happens when it exits because of the signalhandler. That is fine.
-            self.__socket.sendmsg(b'a')
-            time.sleep(self.__duration)
+            try:
+                self.__socket.sendall(b'a')
+                time.sleep(self.__duration)
+            except:
+                return
 
 
 class SignalHandler(object):
@@ -40,7 +43,7 @@ class SignalHandler(object):
     
     def exit_gracefully(self, signum, frame):
         with self.__condition:
-            self.__sock.sendmsg(b'a')
+            self.__sock.sendall(b'a')
             self.__condition.notify_all()
 
 class OpenElectrons_i2c_fixed(object):
@@ -216,7 +219,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             return value
         except:
             logging.error("Could not read battery estimated time")
-            return ""        
+            return 0
         
     ## Reads the SmartUPS battery health values
     #  @param self The object pointer.
@@ -226,18 +229,18 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             return value
         except:
             logging.error("Could not read battery health")
-            return ""
+            return 0
     
     ## Reads the SmartUPS battery state
     #  @param self The object pointer.
     def readBattState(self):
         try:
-            state = ["IDLE", "PRECHARG" ,"CHARGING","TOPUP","CHARGED","DISCHARGING","CRITICAL","DISCHARGED","FAULT","SHUTDOWN" ]
+            state = ["IDLE", "PRECHARG", "CHARGING", "TOPUP", "CHARGED", "DISCHARGING", "CRITICAL", "DISCHARGED", "FAULT", "SHUTDOWN"]
             value = self.readByte(self.SmartUPS_STATE)
             return state[value]
         except:
             logging.error("Could not read battery state")
-            return ""
+            return "FAULT"
         
     ## Reads the SmartUPS button click status values
     ## 1 is a short button click, 10 is a long one
@@ -261,7 +264,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             return value
         except:
             logging.error("Could not read output voltage")
-            return ""        
+            return 0        
         
     ## Reads the SmartUPS output current values
     #  @param self The object pointer.
@@ -271,7 +274,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             return value
         except:
             logging.error("Could not read output current")
-            return ""        
+            return 0        
     
     ## Reads the SmartUPS battery maximum capacity values
     #  @param self The object pointer.
@@ -281,7 +284,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             return value 
         except:
             logging.error("Could not read maximum capacity")
-            return ""        
+            return 0        
 
     ## Reads the SmartUPS time in seconds
     #  @param self The object pointer.
@@ -291,8 +294,8 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             return value
         except:
             logging.error("Could not read seconds")
-            return ""
-        
+            return 0
+
     ## Reads the SmartUPS charged values
     #  @param self The object pointer.
     def readCharge(self):
@@ -301,7 +304,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             return value
         except:
             logging.error("Could not read battery charged value")
-            return ""
+            return 0
 
     ## Read the version of the PSU
     # @param self The object pointer.
@@ -321,6 +324,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             return value
         except:
             print("Error: Could not read vendor")
+            return ""
 
     ## Read the Device ID of the UPS. It is likely "SmartUPS".
     # @param self The object pointer.
@@ -360,6 +364,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
             print("Error: Could not read button status")
             return ""
 
+## SmartUpsMonitor implements a monitor class for FreeElectron's smart UPS
 class SmartUpsMonitor():
     def __init__(self):
         self.__sleep = 5
@@ -371,9 +376,10 @@ class SmartUpsMonitor():
         self.__config = "/etc/upsmon.yml"
         self.__ups = None
         self.__inhibited = False
-        self.__batteryThreshold = 1.2
-        self.__batteryTemperatureThreshold = 60
-        self.__inputVoltageThreshold = 4.5
+        # broken in the FW
+        self.__batteryThreshold = 0
+        self.__battery_temperatureThreshold = 60
+        self.__input_voltage_threshold = 4.0
         self.__restartOption = 1
         self.__parse_config()
 
@@ -383,33 +389,35 @@ class SmartUpsMonitor():
             with open(self.__config, "r") as f:
                 config_file = yaml.safe_load(f)
         except FileNotFoundError as exception:
-            logging.warn("No config file found at %s. Continuing without reading configuration.", self.__config)
+            logging.warning("No config file found at %s. Continuing without reading configuration.", self.__config)
             return True
         except Exception as exception:
             logging.critical("Exception occured while trying to read config: %s", Exception)
             return False
 
         occured = {}
-        exitWithError = False
+        exit_with_error = False
         for key, value in config_file.values():
             if key not in occured:
                 occured[key] = None
             else:
                 logging.error("Duplicate key %s in config file!", key)
-                exitWithError = True
+                exit_with_error = True
             if key == "sleep":
                 self.sleep = value            
             elif key in ["bus", "address", "debug", "verbose", "test",
-                "batteryThreshold", "batteryTemperatureThreshold", "inputVoltageThreshold", "restartOption"]:
+                "batteryThreshold", "battery_temperatureThreshold", "input_voltageThreshold", "restartOption"]:
                 self.__dict__["__%s" % key] = value
             else:
                 logging.error("Unknown key %s found", key)
-                exitWithError = True
-        if exitWithError:
+                exit_with_error = True
+        if exit_with_error:
             sys.exit(1)
 
         return True
 
+    ## Parse arguments and apply them, if they were passed (don't apply any of the defaults)
+    # @param self Pointer to object.
     def parse_args(self):
         parser = argparse.ArgumentParser(description="Monitor for SmartUPS from OpenElectrons")
         parser.add_argument("-c", "--config",
@@ -456,60 +464,66 @@ class SmartUpsMonitor():
         if "--address" in sys.argv:
             self.__address = args.address
 
+        print(args)
+
     def __check_ups(self):
         ups = self.__ups
         # check the estimated runtime. If it's below one minute, log a warning
-        time = ups.readBattEstimatedTime()
+        batt_run_time = ups.readBattEstimatedTime()
         if time < 60:
-            logging.warning("Estimated battery runtime %s is below 60 seconds!", time)
+            logging.warning("Estimated battery runtime %s is below 60 seconds!", batt_run_time)
         else:
-            logging.info("Runtime is %s", time)
+            logging.info("Runtime is %s", batt_run_time)
         
         # read the battery voltage
-        batteryVoltage = float(ups.readOutputVoltage())
-        if batteryVoltage < self.__batteryThreshold:
-            logging.warning("Battery voltage %s is below threshold %s", batteryVoltage/1000, self.__batteryThreshold)
+        battery_voltage = float(ups.readOutputVoltage())
+        if battery_voltage < self.__batteryThreshold:
+            logging.warning("Battery voltage %s is below threshold %s", battery_voltage/1000, self.__batteryThreshold)
         else:
-            logging.info("Battery voltage is %s V", batteryVoltage/1000)
+            logging.info("Battery voltage is %s V", battery_voltage/1000)
 
         # read the battery temperature
-        batteryTemperature = ups.readBattTemperature()
-        if batteryTemperature < self.__batteryTemperatureThreshold:
-            logging.warning("Battery (%s)is over the temperature threshold (%s)!", batteryTemperature, self.__batteryTemperatureThreshold)
+        battery_temperature = ups.readBattTemperature()
+        if battery_temperature > self.__battery_temperatureThreshold:
+            logging.warning("Battery (%s) is over the temperature threshold (%s)!", battery_temperature, self.__battery_temperatureThreshold)
         else:
-            logging.info("Battery temperature is %s", batteryTemperature)
+            logging.info("Battery temperature is %s", battery_temperature)
 
         # read the input voltage
-        inputVoltage = float(ups.readBattVoltage())
-        if inputVoltage/1000 < self.__inputVoltageThreshold:
-            logging.warning("Input voltage %s V is below threshold %s", inputVoltage/1000, self.__inputVoltageThreshold)
+        input_voltage = float(ups.readBattVoltage())
+        if input_voltage/1000 < self.__input_voltage_threshold:
+            logging.warning("Input voltage %s V is below threshold %s", input_voltage/1000, self.__input_voltage_threshold)
         else:
-            logging.info("Input voltage is %s V", inputVoltage/1000)
+            logging.info("Input voltage is %s V", input_voltage/1000)
 
         # check the charge as percentage. If the PSU is draining and below 25% or the runtime is below a minue,
         # issue a warning.
-        batteryState = ups.readBattState()
-        batteryCharge = ups.readCharge()
-        if batteryState in [ "DISCHARGING","CRITICAL","DISCHARGED","FAULT" ] and batteryCharge < 0.25:
-            logging.error("Battery is %s and below 25%% charge at %s.", batteryState, batteryCharge)
-            if not self.__test:
-                self.__shut_down()
+        battery_state = ups.readBattState()
+        battery_charge = ups.readCharge()
+        if battery_state in [ "DISCHARGING","CRITICAL","DISCHARGED","FAULT" ] and battery_charge < 0.25:
+            logging.error("Battery is %s and below 25%% charge at %s.", battery_state, battery_charge)
+            self.__shut_down()
         else:
-            logging.info("Battery state is %s and charge is at %s", batteryState, batteryCharge)
+            logging.info("Battery state is %s and charge is at %s", battery_state, battery_charge)
 
         # Then if the estimated runtime is below a minute, issue an error and shut down. Tell it to start the system again
         # when the PSU has power again
-        batteryEstimatedRuntime = ups.readBattEstimatedTime()
-        if batteryEstimatedRuntime < 60:
-            logging.error("battery runtime %s is below a minute", batteryEstimatedRuntime)
+        battery_estimated_runtime = ups.readBattEstimatedTime()
+        if battery_estimated_runtime < 60:
+            logging.error("battery runtime %s is below a minute", battery_estimated_runtime)
             self.__shut_down()
         else:
-            logging.info("Battery runtime is at %s", batteryEstimatedRuntime)
+            logging.info("Battery runtime is at %s", battery_estimated_runtime)
 
+        restartTime = ups.readRestartTime()
+        if restartTime > 0 and not self.__inhibited:
+            logging.critical("UPS indicated restart time %s. Shutting down.", restartTime)
+            self.__shut_down()
     ## Shut down the system
     # @param self The object pointer.
     def __shut_down(self, ups=False):
         # issue shut down
+        logging.critical("Received shutdown signal")
         if not self.__inhibited and not self.__test:
             if ups:
                 self.__ups.writeCommand(0x53)
@@ -522,7 +536,7 @@ class SmartUpsMonitor():
         try:
             self.__ups = SmartUPS(self.__address, self.__bus)
         except Exception as exception:
-            logging.error("Failed to create I2C object to monitor PSU" % exception)
+            logging.error("Failed to create I2C object to monitor PSU: %s", exception)
             sys.exit(1)
         # write the restart option
         self.__ups.writeRestartOption(self.__restartOption)
@@ -535,17 +549,19 @@ class SmartUpsMonitor():
 
         waiter_sock, remote_sock = socket.socketpair(type=socket.SOCK_DGRAM)  
         waiter_fd = waiter_sock.fileno()
-        waiter = WaiterThread(self.sleep, remote_sock)
+        waiter = WaiterThread(self.__sleep, remote_sock)
         waiter_thread = threading.Thread(target=waiter.run)
+        waiter_thread.start()
         polling_object = select.poll()
         polling_object.register(waiter_sock, select.POLLIN)
         polling_object.register(handler_sock, select.POLLIN)
 
         while True:
-            fds, flags = polling_object.poll()
-            for fd, flag_set in zip(fd, flags):
+            fds_and_flags = polling_object.poll()
+            for fd, flag_set in fds_and_flags:
                 if fd == handler_fd:
                     logging.warning("Received shutdown signal. Shutting down.")
+                    handler_sock.recvmsg()
                     with condition:
                         condition.notify_all()
                     break
@@ -553,6 +569,7 @@ class SmartUpsMonitor():
                 elif fd == waiter_fd:
                     logging.debug("Received wake up signal from waiter thread")
                     self.__check_ups()
+                    waiter_sock.recvmsg()
                 else:
                     logging.error("Received socket from unknown fd %s", fd)
 
@@ -564,17 +581,13 @@ class SmartUpsMonitor():
             level = logging.INFO
 
         logging.basicConfig(level=level,
-            datefmt="%H:%M:%S",
-            stream=sys.stdout)
+                            datefmt="%H:%M:%S",
+                            stream=sys.stdout)
 
     def run(self):
         self.__loggingConfig()
-        if self.__parse_config():
-            self.parse_args()
-            self.__main()
-        else:
-            sys.exit(1)
-
+        self.parse_args()
+        self.__main()
 
 if __name__ == '__main__':
     monitor = SmartUpsMonitor()
