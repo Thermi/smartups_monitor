@@ -19,19 +19,23 @@ import time
 import yaml
 
 class WaiterThread(object):
-    def __init__(self, duration, sock):
+    def __init__(self, duration, condition, sock):
         self.__duration = duration
         self.__socket = sock
+        self.__condition = condition
 
     def run(self):
-        while True:
-            # thread exits when sendall fails, because the socket was closed by the main thread.
-            # That happens when it exits because of the signalhandler. That is fine.
-            try:
-                self.__socket.sendall(b'a')
-                time.sleep(self.__duration)
-            except:
-                return
+        with self.__condition:
+            while True:
+                # thread exits when sendall fails, because the socket was closed by the main thread.
+                # That happens when it exits because of the signalhandler. That is fine.
+                try:
+                    self.__socket.sendall(b'a')
+                    condition.wait(self.__duration)
+                    if sock.recv(9000) is not None:
+                        return
+                except:
+                    return
 
 
 class SignalHandler(object):
@@ -144,37 +148,44 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     
     I2C_ADDRESS = (0x24)
     
-    SmartUPS_WHO_AM_I    =  0x10
-    SmartUPS_VERSION    =  0x00
-    SmartUPS_VENDOR    =  0x08
+    SMARTUPS_WHO_AM_I    =  0x10
+    SMARTUPS_VERSION    =  0x00
+    SMARTUPS_VENDOR    =  0x08
     
-    SmartUPS_COMMAND  = 0x41
-    SmartUPS_RESTART_OPTION  =  0x42
-    SmartUPS_BUTTON_CLICK   =  0x43
-    SmartUPS_RESTART_TIME   =  0x44
-    SmartUPS_STATE   =  0x46
-    SmartUPS_BAT_CURRENT   =  0x48
-    SmartUPS_BAT_VOLTAGE   =  0x4a
-    SmartUPS_BAT_CAPACITY   =  0x4c
-    SmartUPS_TIME   =  0x4e
-    SmartUPS_BAT_TEMPERATURE   =  0x50
-    SmartUPS_BAT_HEALTH   =  0x51
-    SmartUPS_OUT_VOLTAGE   =  0x52
-    SmartUPS_OUT_CURRENT   =  0x54
-    SmartUPS_MAX_CAPACITY   =  0x56
-    SmartUPS_SECONDS   = 0x58 
+    SMARTUPS_COMMAND  = 0x41
+    SMARTUPS_RESTART_OPTION  =  0x42
+    SMARTUPS_BUTTON_CLICK   =  0x43
+    SMARTUPS_RESTART_TIME   =  0x44
+    SMARTUPS_STATE   =  0x46
+    SMARTUPS_BAT_CURRENT   =  0x48
+    SMARTUPS_BAT_VOLTAGE   =  0x4a
+    SMARTUPS_BAT_CAPACITY   =  0x4c
+    SMARTUPS_TIME   =  0x4e
+    SMARTUPS_BAT_TEMPERATURE   =  0x50
+    SMARTUPS_BAT_HEALTH   =  0x51
+    SMARTUPS_OUT_VOLTAGE   =  0x52
+    SMARTUPS_OUT_CURRENT   =  0x54
+    SMARTUPS_MAX_CAPACITY   =  0x56
+    SMARTUPS_SECONDS   = 0x58 
     
     ## Initialize the class with the i2c address of the SmartUPS
     #  @param self The object pointer.
     #  @param i2c_address Address of your SmartUPS.
     def __init__(self, address = I2C_ADDRESS, bus = 1):
-        OpenElectrons_i2c_fixed.__init__(self, address, bus)  
+        OpenElectrons_i2c_fixed.__init__(self, address, bus)
+        try:
+            ret = self.GetDeviceId()
+            if not ret:
+                logging.error("Could not connect to UPS!")
+        except Exception as e:
+            logging.error("Could not connect to UPS!")
+            raise e
     
     ## Reads the SmartUPS battery voltage values
     #  @param self The object pointer.
     def readBattVoltage(self):
         try:
-            value = self.readInteger(self.SmartUPS_BAT_VOLTAGE)
+            value = self.readInteger(self.SMARTUPS_BAT_VOLTAGE)
             return value   
         except:
             logging.error("Could not read battery voltage")
@@ -184,7 +195,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readBattCurrent(self):
         try:
-            value = self.readIntegerSigned(self.SmartUPS_BAT_CURRENT)
+            value = self.readIntegerSigned(self.SMARTUPS_BAT_CURRENT)
             return value
         except:
             logging.error("Could not read battery current")
@@ -195,7 +206,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readBattTemperature(self):
         try:
-            value = self.readByte(self.SmartUPS_BAT_TEMPERATURE)
+            value = self.readByte(self.SMARTUPS_BAT_TEMPERATURE)
             return value
         except:
             logging.error("Could not read battery temperature")
@@ -205,7 +216,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readBattCapacity(self):
         try:
-            value = self.readInteger(self.SmartUPS_BAT_CAPACITY)
+            value = self.readInteger(self.SMARTUPS_BAT_CAPACITY)
             return value
         except:
             logging.error("Could not read battery capacity")
@@ -215,7 +226,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readBattEstimatedTime(self):
         try:
-            value = self.readInteger(self.SmartUPS_TIME)
+            value = self.readInteger(self.SMARTUPS_TIME)
             return value
         except:
             logging.error("Could not read battery estimated time")
@@ -225,7 +236,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readBattHealth(self):
         try:
-            value = self.readByte(self.SmartUPS_BAT_HEALTH)
+            value = self.readByte(self.SMARTUPS_BAT_HEALTH)
             return value
         except:
             logging.error("Could not read battery health")
@@ -236,7 +247,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     def readBattState(self):
         try:
             state = ["IDLE", "PRECHARG", "CHARGING", "TOPUP", "CHARGED", "DISCHARGING", "CRITICAL", "DISCHARGED", "FAULT", "SHUTDOWN"]
-            value = self.readByte(self.SmartUPS_STATE)
+            value = self.readByte(self.SMARTUPS_STATE)
             return state[value]
         except:
             logging.error("Could not read battery state")
@@ -247,20 +258,17 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readButtonClick(self):
         try:
-            value = self.readByte(self.SmartUPS_BUTTON_CLICK)
-            if value != 0:
-                return str(value)
-            else:
-                return ""
+            value = self.readByte(self.SMARTUPS_BUTTON_CLICK)
+            return value
         except:
             logging.error("Could not read button click")
-            return ""
+            return 0
             
     ## Reads the SmartUPS output voltage values
     #  @param self The object pointer.
     def readOutputVoltage(self):
         try: 
-            value = self.readInteger(self.SmartUPS_OUT_VOLTAGE)
+            value = self.readInteger(self.SMARTUPS_OUT_VOLTAGE)
             return value
         except:
             logging.error("Could not read output voltage")
@@ -270,7 +278,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readOutputCurrent(self):
         try:
-            value = self.readIntegerSigned(self.SmartUPS_OUT_CURRENT)
+            value = self.readIntegerSigned(self.SMARTUPS_OUT_CURRENT)
             return value
         except:
             logging.error("Could not read output current")
@@ -280,7 +288,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readMaxCapacity(self):
         try:
-            value = self.readInteger(self.SmartUPS_MAX_CAPACITY)
+            value = self.readInteger(self.SMARTUPS_MAX_CAPACITY)
             return value 
         except:
             logging.error("Could not read maximum capacity")
@@ -290,7 +298,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readSeconds(self):
         try:
-            value = self.readLong(self.SmartUPS_SECONDS)
+            value = self.readLong(self.SMARTUPS_SECONDS)
             return value
         except:
             logging.error("Could not read seconds")
@@ -300,7 +308,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     #  @param self The object pointer.
     def readCharge(self):
         try: 
-            value = self.readInteger(self.SmartUPS_BAT_CAPACITY)*100/(1+self.readInteger(self.SmartUPS_MAX_CAPACITY))
+            value = self.readInteger(self.SMARTUPS_BAT_CAPACITY)*100/(1+self.readInteger(self.SMARTUPS_MAX_CAPACITY))
             return value
         except:
             logging.error("Could not read battery charged value")
@@ -341,7 +349,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     # @param command The hex of the command. Can only be "0x53" for "Shutdown in 50 seconds" right now
     def writeCommand(self, command):
         try:
-            self.writeByte(self.SmartUPS_COMMAND, command)
+            self.writeByte(self.SMARTUPS_COMMAND, command)
         except:
             print("Error: Could not write command")
 
@@ -350,7 +358,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     # @param option The option to write
     def writeRestartOption(self, option):
         try:
-            self.writeByte(self.SmartUPS_RESTART_OPTION, option)
+            self.writeByte(self.SMARTUPS_RESTART_OPTION, option)
         except:
             print("Error: Could not write restart option")
 
@@ -358,7 +366,7 @@ class SmartUPS(OpenElectrons_i2c_fixed):
     # @param self The object pointer.
     def readRestartTime(self):
         try:
-            value = self.readByte(self.SmartUPS_RESTART_TIME)
+            value = self.readByte(self.SMARTUPS_RESTART_TIME)
             return value
         except:
             print("Error: Could not read button status")
@@ -379,8 +387,9 @@ class SmartUpsMonitor():
         # broken in the FW
         self.__batteryThreshold = 0
         self.__battery_temperatureThreshold = 60
-        self.__input_voltage_threshold = 4.0
+        self.__input_voltage_threshold = 3.3
         self.__restartOption = 1
+        self.__print_values = False
         self.__parse_config()
 
     def __parse_config(self):
@@ -388,10 +397,10 @@ class SmartUpsMonitor():
         try:
             with open(self.__config, "r") as f:
                 config_file = yaml.safe_load(f)
-        except FileNotFoundError as exception:
+        except FileNotFoundError:
             logging.warning("No config file found at %s. Continuing without reading configuration.", self.__config)
             return True
-        except Exception as exception:
+        except Exception:
             logging.critical("Exception occured while trying to read config: %s", Exception)
             return False
 
@@ -404,9 +413,10 @@ class SmartUpsMonitor():
                 logging.error("Duplicate key %s in config file!", key)
                 exit_with_error = True
             if key == "sleep":
-                self.sleep = value            
+                self.sleep = value
             elif key in ["bus", "address", "debug", "verbose", "test",
-                "batteryThreshold", "battery_temperatureThreshold", "input_voltageThreshold", "restartOption"]:
+                "batteryThreshold", "battery_temperatureThreshold", "input_voltageThreshold",
+                "restartOption"]:
                 self.__dict__["__%s" % key] = value
             else:
                 logging.error("Unknown key %s found", key)
@@ -449,6 +459,11 @@ class SmartUpsMonitor():
             default=0x12,
             type=int)
 
+        parser.add_argument("--print-values",
+            help="Print out all settings of the UPS",
+            default=False,
+            action="store_true")
+
         args = parser.parse_args()
 
         if "-c" or "--config" in sys.argv:
@@ -463,18 +478,46 @@ class SmartUpsMonitor():
             self.__bus = args.bus
         if "--address" in sys.argv:
             self.__address = args.address
+        if "--print-values" in sys.argv:
+            self.__print_values = args.print_values
 
-        print(args)
+        level = logging.WARNING
+        if self.__debug:
+            level = logging.DEBUG
+        elif self.__verbose:
+            level = logging.INFO
+
+        logging.root.setLevel(level)
+
+    def __print_all_values(self):
+        print("battery voltage: %s" % self.__ups.readBattVoltage())
+        print("battery amperage: %s" % self.__ups.readBattCurrent())
+        print("battery temperature: %s" % self.__ups.readBattTemperature())
+        print("battery capacity: %s" % self.__ups.readBattCapacity())
+        print("battery estimated run time: %s" % self.__ups.readBattEstimatedTime())
+        print("battery health: %s" % self.__ups.readBattHealth())
+        print("battery state: %s" % self.__ups.readBattState())
+        print("battery button click: %s" % self.__ups.readButtonClick())
+        print("battery output voltage: %s" % self.__ups.readOutputVoltage())
+        print("battery output amperage: %s" % self.__ups.readOutputCurrent())
+        print("battery max capacity: %s" % self.__ups.readMaxCapacity())
+        print("battery seconds: %s" % self.__ups.readSeconds())
+        print("battery charge: %s" % self.__ups.readCharge())
+        print("battery version: %s" % self.__ups.readVersion())
+        print("battery vendor: %s" % self.__ups.readVendor())
+        print("battery device id: %s" % self.__ups.readDeviceId())
+        print("battery command: %s" % self.__ups.readByte(self.__ups.SMARTUPS_COMMAND))
+        print("battery restart option: %s" % self.__ups.readByte(self.__ups.SMARTUPS_RESTART_OPTION))
+        print("battery restart time: %s" % self.__ups.readByte(self.__ups.SMARTUPS_RESTART_TIME))
 
     def __check_ups(self):
         ups = self.__ups
         # check the estimated runtime. If it's below one minute, log a warning
         batt_run_time = ups.readBattEstimatedTime()
-        if time < 60:
+        if batt_run_time < 60:
             logging.warning("Estimated battery runtime %s is below 60 seconds!", batt_run_time)
         else:
             logging.info("Runtime is %s", batt_run_time)
-        
         # read the battery voltage
         battery_voltage = float(ups.readOutputVoltage())
         if battery_voltage < self.__batteryThreshold:
@@ -538,50 +581,47 @@ class SmartUpsMonitor():
         except Exception as exception:
             logging.error("Failed to create I2C object to monitor PSU: %s", exception)
             sys.exit(1)
-        # write the restart option
-        self.__ups.writeRestartOption(self.__restartOption)
 
-        condition = threading.Condition()
-        handler_sock, remote_sock = socket.socketpair(type=socket.SOCK_DGRAM)
+        if self.__print_values:
+            self.__print_all_values()
+        else:
+            # write the restart option
+            self.__ups.writeRestartOption(self.__restartOption)
 
-        handler = SignalHandler(condition, handler_sock)
-        handler_fd = handler_sock.fileno()
+            condition = threading.Condition()
+            local_signal_handler_sock, remote_signal_hander_sock = socket.socketpair(type=socket.SOCK_DGRAM)
 
-        waiter_sock, remote_sock = socket.socketpair(type=socket.SOCK_DGRAM)  
-        waiter_fd = waiter_sock.fileno()
-        waiter = WaiterThread(self.__sleep, remote_sock)
-        waiter_thread = threading.Thread(target=waiter.run)
-        waiter_thread.start()
-        polling_object = select.poll()
-        polling_object.register(waiter_sock, select.POLLIN)
-        polling_object.register(handler_sock, select.POLLIN)
+            handler = SignalHandler(condition, remote_signal_hander_sock)
+            handler_fd = local_signal_handler_sock.fileno()
 
-        while True:
-            fds_and_flags = polling_object.poll()
-            for fd, flag_set in fds_and_flags:
-                if fd == handler_fd:
-                    logging.warning("Received shutdown signal. Shutting down.")
-                    handler_sock.recvmsg()
-                    with condition:
-                        condition.notify_all()
-                    break
-                    break
-                elif fd == waiter_fd:
-                    logging.debug("Received wake up signal from waiter thread")
-                    self.__check_ups()
-                    waiter_sock.recvmsg()
-                else:
-                    logging.error("Received socket from unknown fd %s", fd)
+            local_waiter_sock, remote_waiter_sock = socket.socketpair(type=socket.SOCK_DGRAM)  
+            waiter_fd = local_waiter_sock.fileno()
+            waiter = WaiterThread(self.__sleep, condition, remote_waiter_sock)
+            waiter_thread = threading.Thread(target=waiter.run)
+            waiter_thread.start()
+            polling_object = select.poll()
+            polling_object.register(local_waiter_sock, select.POLLIN)
+            polling_object.register(local_signal_handler_sock, select.POLLIN)
+            with condition:
+                while True:
+                    fds_and_flags = polling_object.poll()
+                    for fd, flag_set in fds_and_flags:
+                        if fd == handler_fd:
+                            logging.warning("Received shutdown signal. Shutting down.")
+                            local_signal_handler_sock.recv(9000)
+                            local_waiter_sock.sendall(b'a')
+                            condition.notify_all()
+                            break
+                        elif fd == waiter_fd:
+                            logging.debug("Received wake up signal from waiter thread")
+                            self.__check_ups()
+                            local_waiter_sock.recv(9000)
+                        else:
+                            logging.error("Received socket from unknown fd %s", fd)
+                print("end of loop")
 
     def __loggingConfig(self):
-        level = None
-        if self.__debug:
-            level = logging.DEBUG
-        elif self.__verbose:
-            level = logging.INFO
-
-        logging.basicConfig(level=level,
-                            datefmt="%H:%M:%S",
+        logging.basicConfig(datefmt="%H:%M:%S",
                             stream=sys.stdout)
 
     def run(self):
